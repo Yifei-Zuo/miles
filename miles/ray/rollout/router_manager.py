@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Sequence
 
@@ -54,7 +55,7 @@ async def wait_router_ready(*, model_idx: int, provider: BaseWorkerProvider) -> 
     """Wait until the model's router, launched by the platform, is reachable and return its address."""
     worker_name = compute_router_worker_name(model_idx)
     router_addr = (await provider.get_addrs(worker_name=worker_name))["primary"]
-    wait_tcp_ready(router_addr.host, router_addr.port, timeout=_SERVER_READY_TIMEOUT_SECS)
+    await wait_tcp_ready(router_addr.host, router_addr.port, timeout=_SERVER_READY_TIMEOUT_SECS)
     logger.info(f"Router ready at {router_addr}")
     return router_addr
 
@@ -91,6 +92,7 @@ async def wait_session_server_ready(args, *, provider: BaseWorkerProvider | None
     # The per-address map OpenAIEndpointTracer.create reads instance ids from,
     # replacing the per-session /health probe.
     args.session_server_instance_ids = instance_ids
-    for addr in addrs:
-        wait_tcp_ready(addr.host, addr.port, timeout=_SERVER_READY_TIMEOUT_SECS)
+    await asyncio.gather(
+        *[wait_tcp_ready(addr.host, addr.port, timeout=_SERVER_READY_TIMEOUT_SECS) for addr in addrs]
+    )
     logger.info(f"Session servers ready at {args.session_server_addrs} ({len(addrs)} instances)")
