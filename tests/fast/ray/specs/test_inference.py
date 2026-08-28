@@ -28,6 +28,7 @@ from miles.ray.specs.inference import (
     spec_inference_controller,
     spec_session_server,
     specs_inference_engine,
+    specs_inference_registration_reporter,
 )
 from miles.rollout.session.config import SessionServerConfig
 from miles.router.config import MilesRouterConfig
@@ -36,6 +37,7 @@ from miles.utils.external_utils.command_utils.helm_backend.launcher.values.misc 
 from miles.utils.function_registry import load_function
 from miles.utils.workers.argv_utils import parse_config_argv
 from miles.utils.workers.registration.hub import RegistrationHub
+from miles.utils.workers.types import PlatformAccess
 from miles.utils.workers.worker_provider.static import StaticWorkerProvider
 from miles.utils.workers.worker_spec import (
     RPC_PORT_NAME,
@@ -716,6 +718,18 @@ class TestSpecInferenceController:
         spec = spec_inference_controller(self._args(tmp_path))
 
         assert load_function(spec.worker_class) is InferenceController
+
+    def test_it_declares_only_the_platform_reads_its_provider_performs(self, tmp_path):
+        """Watching engine pods needs reads, while deleting them remains outside this worker's capability."""
+        spec = spec_inference_controller(self._args(tmp_path))
+
+        assert spec.platform_access is PlatformAccess.READ
+
+    def test_the_registration_reporter_declares_only_platform_reads(self, tmp_path):
+        """The reporter watches engine pods, so it needs reads and none of the orchestrator's other rights."""
+        (spec,) = specs_inference_registration_reporter(self._args(tmp_path, deploy_component="inference"))
+
+        assert spec.platform_access is PlatformAccess.READ
 
     def test_the_worker_name_is_stable(self):
         """The driver looks the controller up by name, so this name is part of the release's contract."""
