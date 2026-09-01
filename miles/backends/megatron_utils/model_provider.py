@@ -173,6 +173,12 @@ def get_model_provider_func(
         provider = bridge.to_megatron_provider(load_weights=False)
         _apply_bridge_runtime_config(provider, args)
         provider.finalize()
+        # miles scales the loss from args while Megatron's schedule scales from the model config;
+        # a provider that flips this in finalize() (Qwen3-VL under CP>1) silently breaks both
+        assert provider.calculate_per_token_loss == args.calculate_per_token_loss, (
+            f"the bridge provider set calculate_per_token_loss={provider.calculate_per_token_loss}; "
+            "pass --calculate-per-token-loss so miles' loss scaling matches the model config"
+        )
 
         def wrapped_bridge_provider(
             pre_process: bool = True,
