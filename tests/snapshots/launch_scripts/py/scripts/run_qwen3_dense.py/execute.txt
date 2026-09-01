@@ -33,6 +33,7 @@ export no_proxy=127.0.0.1 && export PYTHONUNBUFFERED=1 && ray job submit
   --kv-channels 128
   --qk-layernorm
   --hf-checkpoint /root/models/Qwen3-4B
+  --model-impl megatron
   --ref-load /root/models/Qwen3-4B_torch_dist
   --load /root/shared_data/checkpoints
   --save /root/shared_data/checkpoints

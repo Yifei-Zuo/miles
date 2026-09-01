@@ -18,7 +18,6 @@ test -e /root/datasets/aime-2024 || hf download
 ### 4
 PYTHONPATH=<REPO_ROOT>:/root/Megatron-LM:/frozen/pythonpath torchrun
   --nproc-per-node 8 <REPO_ROOT>/tools/convert_hf_to_torch_dist.py
-  --spec miles_plugins.models.qwen3_5 get_qwen3_5_spec
   --disable-bias-linear
   --qk-layernorm
   --group-query-attention
@@ -53,4 +52,5 @@ PYTHONPATH=<REPO_ROOT>:/root/Megatron-LM:/frozen/pythonpath torchrun
   --moe-shared-expert-gate
   --mtp-num-layers 1
   --hf-checkpoint /root/models/Qwen3.6-35B-A3B
-  --save /root/models/Qwen3.6-35B-A3B_torch_dist 
+  --save /root/models/Qwen3.6-35B-A3B_torch_dist
+  --model-impl miles
