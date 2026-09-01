@@ -67,7 +67,8 @@ def execute(args: ScriptArgs):
     if args.model_impl == "miles":
         ckpt_args += f"--ref-load {args.model_dir}/{args.model_name}_torch_dist "
     else:
-        ckpt_args += "--megatron-to-hf-mode bridge "
+        # the bridge loads the reference weights straight from the HF checkpoint
+        ckpt_args += f"--megatron-to-hf-mode bridge --ref-load {args.model_dir}/{args.model_name} "
 
     rollout_args = (
         f"--prompt-data {args.data_dir}/dapo-math-17k/dapo-math-17k.jsonl "
