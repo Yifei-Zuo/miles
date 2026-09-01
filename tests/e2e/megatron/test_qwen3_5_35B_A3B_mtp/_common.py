@@ -59,13 +59,16 @@ def prepare(case: CaseConfig) -> None:
         model_name=MODEL_NAME,
         megatron_model_type=MODEL_TYPE,
         num_gpus_per_node=case.num_gpus_per_node,
+        extra_args="--model-impl miles",
     )
 
 
 def build_train_args(case: CaseConfig, *, wandb_file: str) -> str:
     enable_eval = os.environ.get("MILES_TEST_ENABLE_EVAL", "0").lower() in ("1", "true", "yes")
 
-    ckpt_args = f"--hf-checkpoint /root/models/{MODEL_NAME} " f"--ref-load /root/{MODEL_NAME}_torch_dist "
+    ckpt_args = (
+        f"--hf-checkpoint /root/models/{MODEL_NAME} --model-impl miles --ref-load /root/{MODEL_NAME}_torch_dist "
+    )
 
     rollout_args = (
         "--prompt-data /root/datasets/dapo-math-17k/dapo-math-17k.jsonl "

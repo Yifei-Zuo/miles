@@ -63,6 +63,8 @@ class _Recipe:
     extra_sglang_args: str = ""
     # the quick-start recipe serves the dashboard; the rest stay quiet by default
     use_dashboard: bool = False
+    # the Qwen3.5 family trains its GDN layers through the miles plugin in raw mode
+    model_impl: str = "megatron"
 
 
 # Qwen3-32B decodes a wide batch sweep, so it pins the cuda graph batch sizes.
@@ -82,11 +84,11 @@ _RECIPES: dict[str, _Recipe] = {
     ),
     # SGLang TP>1 produces garbage output for Qwen3.5 on 0.5.9, which miles still pins
     # (https://github.com/sgl-project/sglang/issues/21039), hence one GPU per engine.
-    "Qwen3.5-4B": _Recipe("qwen3.5-4B", 2, 9216, 1, 0.7, False),
-    "Qwen3.5-9B": _Recipe("qwen3.5-9B", 2, 9216, 1, 0.6, False),
-    "Qwen3.5-27B": _Recipe("qwen3.5-27B", 4, 8192, 1, 0.5, True),
-    "Qwen3.6-27B": _Recipe("qwen3.6-27B", 4, 8192, 1, 0.5, True),
-    "Qwen3.8-27B": _Recipe("qwen3.8-27B", 4, 8192, 1, 0.8, True),
+    "Qwen3.5-4B": _Recipe("qwen3.5-4B", 2, 9216, 1, 0.7, False, model_impl="miles"),
+    "Qwen3.5-9B": _Recipe("qwen3.5-9B", 2, 9216, 1, 0.6, False, model_impl="miles"),
+    "Qwen3.5-27B": _Recipe("qwen3.5-27B", 4, 8192, 1, 0.5, True, model_impl="miles"),
+    "Qwen3.6-27B": _Recipe("qwen3.6-27B", 4, 8192, 1, 0.5, True, model_impl="miles"),
+    "Qwen3.8-27B": _Recipe("qwen3.8-27B", 4, 8192, 1, 0.8, True, model_impl="miles"),
 }
 
 
@@ -116,6 +118,7 @@ def execute(args: ScriptArgs):
 
     ckpt_args = (
         f"--hf-checkpoint {args.model_dir}/{args.model_name} "
+        f"--model-impl {args.recipe.model_impl} "
         f"--ref-load {args.model_dir}/{args.model_name}_torch_dist "
         f"--load {args.output_dir}/checkpoints "
     )

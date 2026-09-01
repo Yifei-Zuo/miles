@@ -72,6 +72,11 @@ def apply_model_impl(args):
         )
     if args.model_family == "deepseek_v4":
         apply_dsv4_model_impl(args)
+    elif args.model_family in ("qwen3_5", "qwen3_5_moe"):
+        # local import: the plugin holds model code, which argument parsing must not depend on
+        from miles_plugins.models.qwen3_5 import apply_qwen3_5_model_impl
+
+        apply_qwen3_5_model_impl(args)
     elif args.model_impl != "megatron":
         raise ValueError(
             f"--model-impl miles: {args.model_family or 'this model'} has only the megatron implementation"

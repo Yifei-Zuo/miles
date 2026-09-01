@@ -22,6 +22,18 @@ from .hf_attention import HuggingfaceAttention
 from .qwen_gdn_backend import get_chunk_gated_delta_rule
 
 
+QWEN3_5_SPEC = ["miles_plugins.models.qwen3_5", "get_qwen3_5_spec"]
+
+
+def apply_qwen3_5_model_impl(args):
+    """Resolve --model-impl: miles selects this plugin's spec, megatron the native gated_delta_net variant."""
+    if args.spec is None:
+        if args.model_impl == "miles":
+            args.spec = QWEN3_5_SPEC
+        else:
+            args.experimental_attention_variant = "gated_delta_net"
+
+
 def _get_text_config(hf_config):
     """Extract text config from a VLM config if needed."""
     if hasattr(hf_config, "text_config"):

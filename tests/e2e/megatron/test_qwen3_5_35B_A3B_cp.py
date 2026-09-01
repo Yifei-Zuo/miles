@@ -28,7 +28,12 @@ def prepare():
     U.exec_command_cpu(f"hf download Qwen/{MODEL_NAME} --local-dir /root/models/{MODEL_NAME}")
     U.hf_download_dataset("zhuzilin/dapo-math-17k")
     U.hf_download_dataset("zhuzilin/aime-2024")
-    U.convert_checkpoint(model_name=MODEL_NAME, megatron_model_type=MODEL_TYPE, num_gpus_per_node=NUM_GPUS)
+    U.convert_checkpoint(
+        model_name=MODEL_NAME,
+        megatron_model_type=MODEL_TYPE,
+        num_gpus_per_node=NUM_GPUS,
+        extra_args="--model-impl miles",
+    )
 
 
 def _execute_with_cp(cp_size: int):
@@ -36,7 +41,9 @@ def _execute_with_cp(cp_size: int):
     assert NUM_GPUS % cp_size == 0
     ep_size = NUM_GPUS // cp_size
 
-    ckpt_args = f"--hf-checkpoint /root/models/{MODEL_NAME} " f"--ref-load /root/{MODEL_NAME}_torch_dist "
+    ckpt_args = (
+        f"--hf-checkpoint /root/models/{MODEL_NAME} --model-impl miles --ref-load /root/{MODEL_NAME}_torch_dist "
+    )
 
     rollout_args = (
         "--prompt-data /root/datasets/dapo-math-17k/dapo-math-17k.jsonl "

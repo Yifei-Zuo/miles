@@ -43,6 +43,7 @@ def prepare(args: ScriptArgs):
         dir_dst=args.model_dir,
         hf_checkpoint=f"{args.model_dir}/{args.model_name}",
         megatron_path=args.megatron_path,
+        extra_args="--model-impl miles",
     )
 
 
@@ -60,6 +61,7 @@ def execute(args: ScriptArgs):
 
     ckpt_args = (
         f"--hf-checkpoint {args.model_dir}/{args.model_name}-FP8/ "
+        "--model-impl miles "
         f"--ref-load {ref_load_path} "
         f"--load {load_save_path} "
     )

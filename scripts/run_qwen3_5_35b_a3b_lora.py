@@ -7,8 +7,9 @@ GDN (gated-delta-net) linear attention; every layer carries 256 routed experts +
 1 shared expert. Qwen3.6-35B-A3B ships the same architecture and HF classes
 (``Qwen3_5MoeForConditionalGeneration``), so both run through this script.
 
-LoRA trains through the bridge path (``--megatron-to-hf-mode bridge``); the
-registry ``.sh`` only satisfies megatron argparse and its ``--spec`` is inert.
+LoRA trains through the bridge path (``--megatron-to-hf-mode bridge``), i.e. the
+megatron-native GDN (``--model-impl megatron``, the default); the registry only
+satisfies megatron argparse.
 
 Default target modules are wildcards anchored at ``language_model.decoder.layers.*``:
 this keeps LoRA off the MTP block (``language_model.mtp.*`` has no adapter export

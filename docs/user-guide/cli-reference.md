@@ -159,7 +159,8 @@ Sections mirror the launch-script argument groups.
 | `--save-trigger-sentinel` | path | – | If this file exists at a save point, save a checkpoint now (regardless of `--save-interval`) and remove the file. |
 | `--custom-megatron-post-save-hook-path` | `<module>.<fn>` | – | Rank-0 callback after each checkpoint save. |
 | `--model-name` | str | – | Set in multi-node to avoid `transformers` file-system race. |
-| `--spec` | `<module> <fn>` | – | Plugin spec for custom architectures (e.g. `miles_plugins.models.qwen3_5 get_qwen3_5_spec`). |
+| `--spec` | `<module> <fn>` | – | Plugin spec for custom architectures (e.g. `miles_plugins.models.glm5.glm5 get_glm5_spec`). |
+| `--model-impl` | `megatron`/`miles` | `megatron` | Which side implements a model's non-standard layers. `miles` exists for DeepSeek-V4 and the Qwen3.5 family (sets `--spec` for you); Qwen3.5's `megatron` implementation is built by Megatron-Bridge, so it needs `--megatron-to-hf-mode bridge`. |
 
 ### Rollout: data and batching
 
