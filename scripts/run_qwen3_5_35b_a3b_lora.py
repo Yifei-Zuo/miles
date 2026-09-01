@@ -21,7 +21,6 @@ and ``out_proj``.
 
 Constraints baked into the parallel config:
   * TP <= 2: num_query_groups=2 caps tensor parallelism for the 35B-A3B geometry.
-  * ``--qkv-format bshd``: megatron-core GatedDeltaNet rejects packed (thd) sequences.
 
 Usage:
   python scripts/run_qwen3_5_35b_a3b_lora.py prepare    --model-name Qwen3.5-35B-A3B
@@ -119,17 +118,13 @@ class ScriptArgs(U.ExecuteTrainConfig):
 
 
 def _get_parallel_config(args: ScriptArgs) -> str:
-    """Single-node layout: TP2 (num_query_groups=2 caps TP), EP = num GPUs, DP for the rest.
-
-    bshd is required because the megatron-core GatedDeltaNet forward rejects packed
-    sequences; with --micro-batch-size 1 the batch stays unpacked.
-    """
+    """Single-node layout: TP2 (num_query_groups=2 caps TP), EP = num GPUs, DP for the rest."""
     return (
         "--tensor-model-parallel-size 2 --sequence-parallel --pipeline-model-parallel-size 1 "
         f"--context-parallel-size 1 --expert-model-parallel-size {args.num_gpus_per_node} "
         "--expert-tensor-parallel-size 1 "
         "--recompute-granularity full --recompute-method uniform --recompute-num-layers 1 "
-        "--qkv-format bshd --micro-batch-size 1 --max-tokens-per-gpu 4096 "
+        "--use-dynamic-batch-size --max-tokens-per-gpu 4096 "
     )
 
 
