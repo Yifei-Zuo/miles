@@ -1,9 +1,11 @@
 import logging
 import os
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch.distributed as dist
+from megatron.core.utils import unwrap_model
 
 # TODO: may need to copy those 2 functions and do refactoring.
 from megatron.training.checkpointing import load_checkpoint as _load_checkpoint_megatron
@@ -14,6 +16,7 @@ from miles.utils import megatron_bridge_utils
 from miles_plugins.models.deepseek_v4.arguments import assert_checkpoint_is_current, is_dsv4_model
 
 from .lora_utils import is_lora_enabled, is_lora_model, load_lora_adapter, save_lora_checkpoint
+from .model_provider import LinearForLastLayer
 
 try:
     # Here we patch out the `validate_non_overlapping_shards_metadata` in both functions
@@ -179,13 +182,28 @@ def _is_megatron_checkpoint(path: str | Path) -> bool:
     )
 
 
+@contextmanager
+def _hide_value_head(ddp_model):
+    # The critic's value head has no HF counterpart: keep it out of the bridge's conversion walk,
+    # which would otherwise map output_layer.weight onto lm_head.weight and fail on shape.
+    hidden = []
+    for chunk in unwrap_model(ddp_model):
+        if isinstance(getattr(chunk, "output_layer", None), LinearForLastLayer):
+            hidden.append((chunk, chunk._modules.pop("output_layer")))
+    try:
+        yield
+    finally:
+        for chunk, head in hidden:
+            chunk._modules["output_layer"] = head
+
+
 def _load_checkpoint_hf(ddp_model, optimizer, args, load_path: str):
     assert args.megatron_to_hf_mode == "bridge", "Only bridge mode is supported for loading HF checkpoint"
     from megatron.bridge import AutoBridge
 
     logger.info(f"Load checkpoint from HuggingFace model into Megatron (path={load_path})")
 
-    with megatron_bridge_utils.patch_megatron_model(ddp_model):
+    with megatron_bridge_utils.patch_megatron_model(ddp_model), _hide_value_head(ddp_model):
         bridge = AutoBridge.from_hf_pretrained(load_path, trust_remote_code=True)
         bridge.load_hf_weights(ddp_model)
 
