@@ -53,9 +53,9 @@ def compute_advantages(
     # ctpo shares this path deliberately: it changes the importance weight
     # (prefix product instead of per-token or sequence-mean ratio), not the
     # credit assignment, so the broadcast group-normalised advantage is the same.
-    # cispo shares it for the same reason: the stop-gradient clipped IS weight
-    # replaces the loss, not the group-normalised advantage.
-    if args.advantage_estimator in ["grpo", "gspo", "ctpo", "cispo"]:
+    # cispo and minpro share it for the same reason: they change the loss's
+    # importance weight, not the group-normalised advantage.
+    if args.advantage_estimator in ["grpo", "gspo", "ctpo", "cispo", "minpro"]:
         rewards = torch.tensor(rewards, dtype=torch.float32, device=kl[0].device)
         returns = get_grpo_returns(rewards, kl)
         # TODO: is the copy necessary?

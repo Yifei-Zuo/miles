@@ -380,6 +380,60 @@ def compute_cispo_loss(
     return pg_losses, clipfrac
 
 
+def compute_minpro_prefix_min(
+    log_probs: list[torch.Tensor],
+    old_log_probs: list[torch.Tensor],
+    loss_masks: list[torch.Tensor],
+) -> torch.Tensor:
+    """MinPRO prefix factor rho_bar_t = min_{i<t} rho_i, per sample (arXiv:2601.22718 Sec. 3).
+
+    One sample == one trajectory (a whole multi-turn game here): the running minimum is
+    EXCLUSIVE (strictly before t), restarts at each sample boundary, treats non-action tokens
+    (loss_mask == 0) as transparent (+inf), and an empty prefix yields the identity 1 — the
+    paper's rho_bar convention. Fully detached: no gradient flows to the argmin token
+    (the paper's stop-gradient placement). The log-ratio is clamped to +-20 before exp so
+    one extreme token cannot poison every later prefix.
+    """
+    outs = []
+    for lp, olp, mask in zip(log_probs, old_log_probs, loss_masks, strict=False):
+        log_ratio = _safe_clamp_log_ratio(lp.detach().float() - olp.detach().float())
+        ratio = log_ratio.exp()
+        inf = torch.full_like(ratio, float("inf"))
+        masked = torch.where(mask.bool(), ratio, inf)
+        inclusive = torch.cummin(masked, dim=0).values
+        exclusive = torch.cat([inf[:1], inclusive[:-1]])
+        outs.append(torch.where(torch.isinf(exclusive), torch.ones_like(exclusive), exclusive))
+    return torch.cat(outs, dim=0)
+
+
+def compute_minpro_loss(
+    ppo_kl: torch.Tensor,
+    prefix_min: torch.Tensor,
+    advantages: torch.Tensor,
+    eps_clip: float,
+    eps_clip_high: float,
+):
+    """MinPRO loss (arXiv:2601.22718) under GRPO hard clipping — the xorl minpro_loss variant.
+
+    The paper approximates the theoretically-correct prefix importance ratio rho_{1:t} with
+    rho_bar_t * rho_t (rho_bar = min over the strict prefix). The PAPER wraps it in CISPO-style
+    soft clipping; this kernel (deliberately, matching xorl's minpro_loss.py, the experiment's
+    design axis) applies the PPO/GRPO hard min-rule on the combined ratio instead:
+
+        J = E[min(rho_bar*rho * A, clip(rho_bar*rho, 1-eps, 1+eps_high) * A)]
+
+    rho_bar is detached, so the unclipped gradient is exactly rho_bar*rho*grad(logpi)*A and a
+    clipped token is gated out of the gradient entirely.
+    """
+    ratio = _safe_exp_neg_ppo_kl(ppo_kl)
+    combined = prefix_min.detach() * ratio
+    pg_losses1 = -combined * advantages
+    pg_losses2 = -combined.clamp(1.0 - eps_clip, 1.0 + eps_clip_high) * advantages
+    pg_losses = torch.maximum(pg_losses1, pg_losses2)
+    clipfrac = torch.gt(pg_losses2, pg_losses1).float()
+    return pg_losses, clipfrac
+
+
 def compute_log_probs(
     logits: torch.Tensor,
     tokens: torch.Tensor,

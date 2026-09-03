@@ -1457,6 +1457,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                     "gspo",
                     "ctpo",
                     "cispo",
+                    "minpro",
                     "reinforce_plus_plus",
                     "reinforce_plus_plus_baseline",
                     "ppo",

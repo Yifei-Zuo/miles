@@ -18,6 +18,8 @@ from miles.backends.training_utils.loss_hub.math_utils import (
     compute_ctpo_clip_band,
     compute_ctpo_prefix_kl,
     compute_gspo_kl,
+    compute_minpro_loss,
+    compute_minpro_prefix_min,
     compute_opsm_mask,
     compute_policy_loss,
 )
@@ -172,6 +174,15 @@ def policy_loss_function(
             loss_masks=batch["loss_masks"],
         )
 
+    # MinPRO prefix factor (arXiv:2601.22718): needs the per-sample tensors BEFORE the cat
+    # below; one sample == one whole trajectory, so cp must not split it.
+    minpro_prefix_min = None
+    if args.advantage_estimator == "minpro":
+        assert (
+            getattr(args, "context_parallel_size", 1) or 1
+        ) == 1, "minpro needs the whole trajectory on one rank (context_parallel_size == 1)"
+        minpro_prefix_min = compute_minpro_prefix_min(log_probs, old_log_probs, batch["loss_masks"])
+
     # Which reduction of the per-token KL becomes the importance weight:
     # GSPO takes the sequence mean, CTPO the running prefix sum, others the raw
     # per-token term.
@@ -229,6 +240,10 @@ def policy_loss_function(
 
     if args.advantage_estimator == "cispo":
         pg_loss, pg_clipfrac = compute_cispo_loss(ppo_kl, log_probs, advantages, args.eps_clip, args.eps_clip_high)
+    elif args.advantage_estimator == "minpro":
+        pg_loss, pg_clipfrac = compute_minpro_loss(
+            ppo_kl, minpro_prefix_min, advantages, args.eps_clip, args.eps_clip_high
+        )
     else:
         pg_loss, pg_clipfrac = compute_policy_loss(
             ppo_kl, advantages, eps_clip, eps_clip_high, getattr(args, "eps_clip_c", None)
