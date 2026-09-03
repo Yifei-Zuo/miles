@@ -13,6 +13,7 @@ from miles.backends.training_utils.loss_hub.corrections import vanilla_tis_funct
 from miles.backends.training_utils.loss_hub.logit_processors import get_log_probs_and_entropy, get_values
 from miles.backends.training_utils.loss_hub.math_utils import (
     compute_approx_kl,
+    compute_cispo_loss,
     compute_ess_ratio_contribution,
     compute_ctpo_clip_band,
     compute_ctpo_prefix_kl,
@@ -226,9 +227,12 @@ def policy_loss_function(
     else:
         eps_clip, eps_clip_high = args.eps_clip, args.eps_clip_high
 
-    pg_loss, pg_clipfrac = compute_policy_loss(
-        ppo_kl, advantages, eps_clip, eps_clip_high, getattr(args, "eps_clip_c", None)
-    )
+    if args.advantage_estimator == "cispo":
+        pg_loss, pg_clipfrac = compute_cispo_loss(ppo_kl, log_probs, advantages, args.eps_clip, args.eps_clip_high)
+    else:
+        pg_loss, pg_clipfrac = compute_policy_loss(
+            ppo_kl, advantages, eps_clip, eps_clip_high, getattr(args, "eps_clip_c", None)
+        )
 
     if getattr(args, "dump_details", None) is not None:
         from miles.backends.training_utils.debug_dump import maybe_dump_policy_loss_debug
