@@ -250,14 +250,94 @@ def compute_gspo_kl(
     return ppo_kl
 
 
+def compute_ctpo_prefix_kl(
+    full_log_probs: list[torch.Tensor],
+    full_old_log_probs: list[torch.Tensor],
+    local_log_probs: list[torch.Tensor],
+    loss_masks: list[torch.Tensor],
+) -> torch.Tensor:
+    """Compute CTPO-style running prefix KL, one value per token.
+
+    ``compute_policy_loss`` forms ``ratio = exp(-ppo_kl)``, so returning the running
+    sum of the per-token KL makes the importance weight the prefix product
+    ``rho_{0:t} = prod_{i<=t} rho_i`` -- the raw prefix ratio, with no length
+    normalisation. GSPO's sequence mean and GRPO's per-token term are the two other
+    reductions of the same per-token quantity.
+
+    ``old`` is whatever the caller bound as the behaviour policy; under
+    ``--use-rollout-logprobs`` that is the inference engine's own log prob, so the
+    weight is genuinely ``pi_theta / mu``.
+
+    Masked-out tokens contribute no factor: the running sum carries through them
+    unchanged, and their own positions are zeroed by the caller.
+
+    Args:
+        full_log_probs: Current policy log-probs per sample (full or CP-local).
+        full_old_log_probs: Behaviour policy log-probs per sample.
+        local_log_probs: Local log-probs, for the CP shape check.
+        loss_masks: Loss masks per sample.
+
+    Returns:
+        Concatenated per-token tensor whose value at t is the sum of the per-token
+        KL over the masked tokens up to and including t, restarting at each sample.
+    """
+    ppo_kl = []
+    for log_prob, old_log_prob, local_log_prob, loss_mask in zip(
+        full_log_probs, full_old_log_probs, local_log_probs, loss_masks, strict=False
+    ):
+        if log_prob.shape != local_log_prob.shape:
+            raise NotImplementedError(
+                "ctpo does not support context parallelism yet: a prefix sum is not "
+                "local, so the running total would have to be sliced back to this "
+                "rank's shard. Run with context-parallel size 1."
+            )
+        ppo_kl.append(torch.cumsum((old_log_prob - log_prob) * loss_mask, dim=0))
+    return torch.cat(ppo_kl, dim=0)
+
+
+def compute_ctpo_clip_band(
+    loss_masks: list[torch.Tensor],
+    eps_clip: float,
+    eps_clip_high: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-token CTPO clip band, widening as sqrt(t) along the response.
+
+    ``log rho_{0:t}`` is a sum of t token log-ratios, so its spread grows as
+    ``sqrt(t)``. A fixed band would therefore clip an ever-larger share of tokens
+    as the response runs on; scaling the band the same way holds the clip rate
+    roughly constant in t.
+
+    ``t`` counts masked-in tokens and is 1-based, so the first generated token gets
+    the base band and contributes exactly one factor to the prefix product. A
+    leading masked token would otherwise give ``t = 0`` and a zero-width band, so
+    ``t`` is floored at 1; those positions are masked out of the loss regardless.
+
+    Returns:
+        ``(eps_low, eps_high)``, concatenated to match the layout of
+        :func:`compute_ctpo_prefix_kl`.
+    """
+    eps_low, eps_high = [], []
+    for loss_mask in loss_masks:
+        scale = torch.sqrt(torch.cumsum(loss_mask, dim=0).clamp_min(1.0))
+        eps_low.append(eps_clip * scale)
+        eps_high.append(eps_clip_high * scale)
+    return torch.cat(eps_low, dim=0), torch.cat(eps_high, dim=0)
+
+
 @torch.compile(dynamic=True)
 def compute_policy_loss(
     ppo_kl: torch.Tensor,
     advantages: torch.Tensor,
-    eps_clip: float,
-    eps_clip_high: float,
+    eps_clip: float | torch.Tensor,
+    eps_clip_high: float | torch.Tensor,
     eps_clip_c: float | None = None,
 ):
+    """PPO clipped policy loss.
+
+    ``eps_clip`` / ``eps_clip_high`` are scalars for the token- and sequence-ratio
+    estimators, or per-token tensors for CTPO, whose band widens along the
+    response. ``Tensor.clamp`` is elementwise either way.
+    """
     ratio = _safe_exp_neg_ppo_kl(ppo_kl)
     pg_losses1 = -ratio * advantages
     pg_losses2 = -ratio.clamp(1 - eps_clip, 1 + eps_clip_high) * advantages
@@ -274,6 +354,83 @@ def compute_policy_loss(
     else:
         pg_losses = clip_pg_losses1
 
+    return pg_losses, clipfrac
+
+
+@torch.compile(dynamic=True)
+def compute_cispo_loss(
+    ppo_kl: torch.Tensor,
+    log_probs: torch.Tensor,
+    advantages: torch.Tensor,
+    eps_clip: float,
+    eps_clip_high: float,
+):
+    """CISPO loss from MiniMax-M1 (https://arxiv.org/abs/2506.13585, Eq. 4-5):
+    ``-sg(clip(ratio, 1 - eps_clip, 1 + eps_clip_high)) * advantages * log_probs``.
+
+    Unlike PPO, the IS ratio is clipped under stop-gradient and the gradient flows
+    through ``log_probs``, so clipped tokens still contribute gradient. The bounds
+    reuse the delta-from-1 convention of ``compute_policy_loss``; canonical CISPO
+    disables the lower bound (``eps_clip >= 1.0``).
+    """
+    ratio = _safe_exp_neg_ppo_kl(ppo_kl)
+    ratio_truncated = torch.clamp(ratio, min=1.0 - eps_clip, max=1.0 + eps_clip_high)
+    pg_losses = -ratio_truncated.detach() * advantages * log_probs
+    clipfrac = (ratio_truncated != ratio).float()
+    return pg_losses, clipfrac
+
+
+def compute_minpro_prefix_min(
+    log_probs: list[torch.Tensor],
+    old_log_probs: list[torch.Tensor],
+    loss_masks: list[torch.Tensor],
+) -> torch.Tensor:
+    """MinPRO prefix factor rho_bar_t = min_{i<t} rho_i, per sample (arXiv:2601.22718 Sec. 3).
+
+    One sample == one trajectory (a whole multi-turn game here): the running minimum is
+    EXCLUSIVE (strictly before t), restarts at each sample boundary, treats non-action tokens
+    (loss_mask == 0) as transparent (+inf), and an empty prefix yields the identity 1 — the
+    paper's rho_bar convention. Fully detached: no gradient flows to the argmin token
+    (the paper's stop-gradient placement). The log-ratio is clamped to +-20 before exp so
+    one extreme token cannot poison every later prefix.
+    """
+    outs = []
+    for lp, olp, mask in zip(log_probs, old_log_probs, loss_masks, strict=False):
+        log_ratio = _safe_clamp_log_ratio(lp.detach().float() - olp.detach().float())
+        ratio = log_ratio.exp()
+        inf = torch.full_like(ratio, float("inf"))
+        masked = torch.where(mask.bool(), ratio, inf)
+        inclusive = torch.cummin(masked, dim=0).values
+        exclusive = torch.cat([inf[:1], inclusive[:-1]])
+        outs.append(torch.where(torch.isinf(exclusive), torch.ones_like(exclusive), exclusive))
+    return torch.cat(outs, dim=0)
+
+
+def compute_minpro_loss(
+    ppo_kl: torch.Tensor,
+    prefix_min: torch.Tensor,
+    advantages: torch.Tensor,
+    eps_clip: float,
+    eps_clip_high: float,
+):
+    """MinPRO loss (arXiv:2601.22718) under GRPO hard clipping — the xorl minpro_loss variant.
+
+    The paper approximates the theoretically-correct prefix importance ratio rho_{1:t} with
+    rho_bar_t * rho_t (rho_bar = min over the strict prefix). The PAPER wraps it in CISPO-style
+    soft clipping; this kernel (deliberately, matching xorl's minpro_loss.py, the experiment's
+    design axis) applies the PPO/GRPO hard min-rule on the combined ratio instead:
+
+        J = E[min(rho_bar*rho * A, clip(rho_bar*rho, 1-eps, 1+eps_high) * A)]
+
+    rho_bar is detached, so the unclipped gradient is exactly rho_bar*rho*grad(logpi)*A and a
+    clipped token is gated out of the gradient entirely.
+    """
+    ratio = _safe_exp_neg_ppo_kl(ppo_kl)
+    combined = prefix_min.detach() * ratio
+    pg_losses1 = -combined * advantages
+    pg_losses2 = -combined.clamp(1.0 - eps_clip, 1.0 + eps_clip_high) * advantages
+    pg_losses = torch.maximum(pg_losses1, pg_losses2)
+    clipfrac = torch.gt(pg_losses2, pg_losses1).float()
     return pg_losses, clipfrac
 
 
